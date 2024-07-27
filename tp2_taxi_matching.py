@@ -30,7 +30,7 @@ def solve_instance_greedy(inst):
     return total_distance, solution
 
 ################## Solucion LP ################################
-def generate_variables(inst, myprob):
+def generate_variables(inst, myprob): 
     n = inst.n
     dist_matrix = inst.dist_matrix
 
@@ -39,10 +39,10 @@ def generate_variables(inst, myprob):
     var_types = [myprob.variables.type.binary] * (n * n)
     myprob.variables.add(obj=obj, types=var_types, names=var_names)
 
-def generate_constraints(inst, myprob, threshold=None):
+def generate_constraints(inst, myprob, threshold=None): # Generamos las restricciones 
     n = inst.n
 
-    for j in range(n):
+    for j in range(n): # Generamos la resticcion de que cada cliente solo pueda tener un vehiculo asignado
         indices = ["x_{}_{}".format(i, j) for i in range(n)]
         values = [1.0] * n
         myprob.linear_constraints.add(
@@ -51,7 +51,7 @@ def generate_constraints(inst, myprob, threshold=None):
             rhs=[1.0]
         )
 
-    for i in range(n):
+    for i in range(n): # Generamos la resticcion de que cada vehiculo solo pueda tener un cliente asignado
         indices = ["x_{}_{}".format(i, j) for j in range(n)]
         values = [1.0] * n
         myprob.linear_constraints.add(
@@ -60,7 +60,7 @@ def generate_constraints(inst, myprob, threshold=None):
             rhs=[1.0]
         )
 
-    if threshold is not None:
+    if threshold is not None: # Agregamos una restriccion de threshold para el punto 5
         for i in range(n):
             for j in range(n):
                 if inst.dist_matrix[i][j] > threshold:
@@ -74,7 +74,7 @@ def populate_by_row(inst, myprob, threshold=None):
     generate_variables(inst, myprob)
     generate_constraints(inst, myprob, threshold)
 
-def solve_instance_lp(inst, threshold=None):
+def solve_instance_lp(inst, threshold=None): #Generamos nuestro modelo de programación lineal 
     myprob = cplex.Cplex()
     myprob.set_problem_type(cplex.Cplex.problem_type.LP)
 
@@ -84,7 +84,7 @@ def solve_instance_lp(inst, threshold=None):
     myprob.solve()
     solve_time = time.time() - start_time
 
-    # Check if the solution is feasible or optimal
+    # Validamos que la solución sea óptima
     if myprob.solution.get_status() not in [1, 101, 102]:
         return float('inf'), [], solve_time
 
@@ -108,10 +108,10 @@ def main():
     n_inst = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
     percentiles = [80, 85, 90]  # Percentiles a utilizar
 
-    # Resultados para el punto 4
+    # Creamos un vector vacío para guardar los resultados para el punto 4
     results_punto4 = []
 
-    # Resultados para el punto 6
+    # Resultados para el punto 5, evaluamos el threshold con distintos percentiles
     results_punto6 = {80: [], 85: [], 90: []}
 
     for t in inst_types:
@@ -152,7 +152,7 @@ def main():
     df_punto4.to_csv('resultados_punto4.csv', index=False)
     print(df_punto4)
 
-    for percentile in percentiles:
+    for percentile in percentiles: # Guardar resultados en archivos CSV para cada percentil
         df_punto6 = pd.DataFrame(results_punto6[percentile])
         df_punto6.to_csv(f'resultados_punto6_{percentile}.csv', index=False)
         print(df_punto6)
