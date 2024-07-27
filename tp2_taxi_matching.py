@@ -1,19 +1,17 @@
 import pandas as pd
-import numpy as np
 from Instance import Instance
 import cplex
+import numpy as np
+import time
 
-EPS = 1e-6
-
+EPS = 1e-6  # Pequeño valor para evitar problemas de precisión numérica
 
 ################## Solucion FCFS greedy ######################
 def solve_instance_greedy(inst):
     n = inst.n
-    taxis_longlat = inst.taxis_longlat
-    paxs_longlat = inst.paxs_longlat
     dist_matrix = inst.dist_matrix
 
-    T = set(range(n))
+    T = set(range(n))  # Generamos el diccionario de tuplas
     solution = []
     total_distance = 0
 
@@ -31,7 +29,6 @@ def solve_instance_greedy(inst):
 
     return total_distance, solution
 
-
 ################## Solucion LP ################################
 def generate_variables(inst, myprob):
     n = inst.n
@@ -42,8 +39,7 @@ def generate_variables(inst, myprob):
     var_types = [myprob.variables.type.binary] * (n * n)
     myprob.variables.add(obj=obj, types=var_types, names=var_names)
 
-
-def generate_constraints(inst, myprob, dist_matrix, threshold=None):
+def generate_constraints(inst, myprob, threshold=None):
     n = inst.n
 
     for j in range(n):
@@ -67,96 +63,99 @@ def generate_constraints(inst, myprob, dist_matrix, threshold=None):
     if threshold is not None:
         for i in range(n):
             for j in range(n):
-                if dist_matrix[i][j] > threshold:
+                if inst.dist_matrix[i][j] > threshold:
                     myprob.linear_constraints.add(
                         lin_expr=[cplex.SparsePair(ind=["x_{}_{}".format(i, j)], val=[1.0])],
-                        senses=["L"],
+                        senses=["E"],
                         rhs=[0.0]
                     )
 
-
 def populate_by_row(inst, myprob, threshold=None):
-    dist_matrix = inst.dist_matrix
     generate_variables(inst, myprob)
-    generate_constraints(inst, myprob, dist_matrix, threshold)
-
+    generate_constraints(inst, myprob, threshold)
 
 def solve_instance_lp(inst, threshold=None):
-    try:
-        myprob = cplex.Cplex()
-        myprob.set_problem_type(cplex.Cplex.problem_type.LP)
+    myprob = cplex.Cplex()
+    myprob.set_problem_type(cplex.Cplex.problem_type.LP)
 
-        populate_by_row(inst, myprob, threshold)
+    populate_by_row(inst, myprob, threshold)
 
-        myprob.solve()
+    start_time = time.time()
+    myprob.solve()
+    solve_time = time.time() - start_time
 
-        total_distance = myprob.solution.get_objective_value()
+    # Check if the solution is feasible or optimal
+    if myprob.solution.get_status() not in [1, 101, 102]:
+        return float('inf'), [], solve_time
 
-        solution = []
-        values = myprob.solution.get_values()
-        n = inst.n
-        for index, value in enumerate(values):
-            if value == 1.0:
-                i = index // n
-                j = index % n
-                solution.append((i, j))
+    total_distance = myprob.solution.get_objective_value()
 
-        return total_distance, solution
+    solution = []
+    values = myprob.solution.get_values()
+    n = inst.n
+    for index, value in enumerate(values):
+        if value > EPS:  # Usamos EPS para evitar problemas de precisión numérica
+            i = index // n
+            j = index % n
+            solution.append((i, j))
 
-    except cplex.exceptions.CplexError as exc:
-        print(exc)
-        return None, None
-
-
-def calculate_threshold(dist_matrix, percentile=90):
-    # Calcular el threshold como el percentil especificado de las distancias
-    flattened_distances = [dist_matrix[i][j] for i in range(len(dist_matrix)) for j in range(len(dist_matrix[i]))]
-    threshold = np.percentile(flattened_distances, percentile)
-    return threshold
-
+    return total_distance, solution, solve_time
 
 ###############################################################
 
 def main():
     inst_types = ['small', 'medium', 'large', 'xl']
     n_inst = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
-    percentile = 90  # Percentil para calcular el threshold
+    percentiles = [80, 85, 90]  # Percentiles a utilizar
 
-    results = []
+    # Resultados para el punto 4
+    results_punto4 = []
+
+    # Resultados para el punto 6
+    results_punto6 = {80: [], 85: [], 90: []}
 
     for t in inst_types:
         for n in n_inst:
             inst_file = 'input/' + t + '_' + n + '.csv'
             inst = Instance(inst_file)
-            threshold = calculate_threshold(inst.dist_matrix, percentile)
 
             f_greedy, x_greedy = solve_instance_greedy(inst)
-            f_lp, x_lp = solve_instance_lp(inst)
-            f_lp_threshold, x_lp_threshold = solve_instance_lp(inst, threshold)
+            f_lp, x_lp, lp_time = solve_instance_lp(inst)
 
-            results.append({
+            results_punto4.append({
                 'Instancia': inst_file,
-                'Distancia Greedy': f_greedy,
+                'Distancia greedy': f_greedy,
                 'Distancia LP': f_lp,
-                'Distancia LP con Threshold': f_lp_threshold,
-                'Mejor Método': 'Greedy' if f_greedy < f_lp else 'LP',
-                'Mejor Distancia': min(f_greedy, f_lp),
-                'Mejora Relativa (%)': (f_greedy - f_lp) / f_lp * 100 if f_lp != 0 else None
+                'Mejora relativa': (f_greedy - f_lp) / f_lp * 100 if f_lp > 0 else float('inf'),
+                'Tiempo LP': lp_time
             })
 
-            print(f'Instancia: {inst_file} | Greedy: {f_greedy} | LP: {f_lp} | LP con Threshold: {f_lp_threshold}')
+            # Calculamos percentiles
+            distances = [inst.dist_matrix[i][j] for i in range(inst.n) for j in range(inst.n)]
+            for percentile in percentiles:
+                threshold = np.percentile(distances, percentile)
+                f_lp_threshold, x_lp_threshold, lp_threshold_time = solve_instance_lp(inst, threshold)
 
-    df = pd.DataFrame(results)
-    print(df)
+                results_punto6[percentile].append({
+                    'Instancia': inst_file,
+                    'Percentil': percentile,
+                    'Threshold': threshold,
+                    'Distancia greedy': f_greedy,
+                    'Distancia LP': f_lp_threshold,
+                    'Mejora relativa': (f_greedy - f_lp_threshold) / f_lp_threshold * 100 if f_lp_threshold > 0 else float('inf'),
+                    'Numero de asignaciones no factibles': len([1 for i, j in x_lp_threshold if inst.dist_matrix[i][j] > threshold]),
+                    'Tiempo LP': lp_threshold_time
+                })
 
-    best_solution = df.loc[df['Mejor Distancia'].idxmin()]
-    print('Mejor solución:')
-    print('Instancia:', best_solution['Instancia'])
-    print('Método:', best_solution['Mejor Método'])
-    print('Distancia total:', best_solution['Mejor Distancia'])
+    # Guardar resultados en archivos CSV
+    df_punto4 = pd.DataFrame(results_punto4)
+    df_punto4.to_csv('resultados_punto4.csv', index=False)
+    print(df_punto4)
 
+    for percentile in percentiles:
+        df_punto6 = pd.DataFrame(results_punto6[percentile])
+        df_punto6.to_csv(f'resultados_punto6_{percentile}.csv', index=False)
+        print(df_punto6)
 
 if __name__ == '__main__':
     main()
-
-
